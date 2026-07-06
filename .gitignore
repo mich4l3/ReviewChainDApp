@@ -1,0 +1,49 @@
+# Node modules
+/node_modules
+
+# Compilation output
+/dist
+
+# pnpm deploy output
+/bundle
+
+# Hardhat Build Artifacts
+/artifacts
+
+# Hardhat compilation (v2) support directory
+/cache
+
+# Typechain output
+/types
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Hardhat coverage reports
+/coverage
+
+# Gas snapshot files
+/.gas-snapshot
+
+# Snapshot cheatcodes output
+/snapshots
+
+# Deployment output (contiene private key degli account di test Hardhat)
+# Rigenerare con: npx hardhat run scripts/deploy.js --network localhost
+deployment.json
+
+# Issuer server dependencies
+/issuer-server/node_modules
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
+
+# Configurazioni locali agente (contengono settings e API key locali)
+.claude/
+.agents/

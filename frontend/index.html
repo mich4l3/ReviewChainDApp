@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TechRate — Recensioni Decentralizzate on Blockchain</title>
+  <meta name="description" content="Piattaforma di recensioni decentralizzate con verifica dell'acquisto (Proof of Purchase), IPFS e reputazione on-chain. Demo universitaria su Hardhat.">
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <!-- Ethers.js v6 UMD — espone window.ethers -->
+  <script src="https://unpkg.com/ethers@6.13.0/dist/ethers.umd.min.js"></script>
+
+  <style>
+    /* ════════════════════════════════════════════════════════════
+       DESIGN TOKENS
+    ════════════════════════════════════════════════════════════ */
+    :root {
+      --bg:          #030712;
+      --bg-2:        #0d1117;
+      --bg-card:     rgba(255,255,255,0.035);
+      --bg-card-h:   rgba(255,255,255,0.055);
+      --border:      rgba(255,255,255,0.08);
+      --border-h:    rgba(255,255,255,0.15);
+
+      --purple:      #7c3aed;
+      --purple-l:    #a78bfa;
+      --blue:        #2563eb;
+      --blue-l:      #60a5fa;
+      --emerald:     #10b981;
+      --emerald-l:   #34d399;
+      --amber:       #f59e0b;
+      --amber-l:     #fcd34d;
+      --red:         #ef4444;
+      --red-l:       #fca5a5;
+
+      --grad-main:  linear-gradient(135deg, var(--purple) 0%, var(--blue) 100%);
+      --grad-green: linear-gradient(135deg, #059669 0%, #0891b2 100%);
+      --grad-amber: linear-gradient(135deg, #d97706 0%, #dc2626 100%);
+
+      --text:        #f1f5f9;
+      --text-2:      #94a3b8;
+      --text-3:      #475569;
+
+      --radius:      14px;
+      --radius-sm:   8px;
+      --shadow:      0 4px 24px rgba(0,0,0,0.4);
+      --shadow-lg:   0 8px 48px rgba(0,0,0,0.6);
+
+      --transition:  0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* ════════════════════════════════════════════════════════════
+       RESET & BASE
+    ════════════════════════════════════════════════════════════ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* ════════════════════════════════════════════════════════════
+       BACKGROUND ORBS (decorativi)
+    ════════════════════════════════════════════════════════════ */
+    .orb {
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(100px);
+      pointer-events: none;
+      z-index: 0;
+      animation: orb-float 20s ease-in-out infinite;
+    }
+    .orb-1 { width: 600px; height: 600px; background: rgba(124,58,237,0.12); top:-150px; left:-150px; animation-duration:28s; }
+    .orb-2 { width: 500px; height: 500px; background: rgba(37,99,235,0.10); bottom:-100px; right:-100px; animation-duration:22s; animation-delay:-8s; }
+    .orb-3 { width: 350px; height: 350px; background: rgba(16,185,129,0.07); top:40%; left:50%; animation-duration:18s; animation-delay:-4s; }
+
+    @keyframes orb-float {
+      0%,100% { transform:translate(0,0) scale(1); }
+      33%      { transform:translate(40px,-30px) scale(1.04); }
+      66%      { transform:translate(-30px,25px) scale(0.97); }
+    }
+
+    /* ════════════════════════════════════════════════════════════
+       HEADER
+    ════════════════════════════════════════════════════════════ */
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(3,7,18,0.75);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+    }
+    .header-inner {
+      max-width: 1300px;
+      margin: 0 auto;
+      padding: 0 24px;
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .logo { display:flex; align-items:center; gap:10px; }
+    .logo-icon {
+      font-size: 1.6rem;
+      background: var(--grad-main);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      filter: drop-shadow(0 0 12px rgba(124,58,237,0.6));
+    }
+    .logo-text { font-size:1.3rem; font-weight:700; letter-spacing:-0.02em; }
+    .logo-sub  { font-size:.7rem; font-weight:500; color:var(--purple-l); background:rgba(124,58,237,0.15); border:1px solid rgba(124,58,237,0.3); padding:2px 8px; border-radius:99px; }
+
+    .header-right { display:flex; align-items:center; gap:12px; }
+
+    .network-badge {
+      font-size:.72rem; font-family:'JetBrains Mono',monospace; font-weight:500;
+      background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.3);
+      color:var(--emerald-l); padding:4px 12px; border-radius:99px;
+    }
+    .wallet-info {
+      display:flex; align-items:center; gap:8px;
+      background:var(--bg-card); border:1px solid var(--border);
+      padding:6px 14px; border-radius:99px;
+    }
+    .wallet-dot {
+      width:8px; height:8px; border-radius:50%;
+      background:var(--emerald);
+      box-shadow:0 0 8px var(--emerald);
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+    @keyframes pulse-dot {
+      0%,100%{ box-shadow:0 0 8px var(--emerald); }
+      50%    { box-shadow:0 0 14px var(--emerald), 0 0 4px var(--emerald); }
+    }
+    #wallet-address { font-family:'JetBrains Mono',monospace; font-size:.8rem; color:var(--text-2); }
+
+    /* ════════════════════════════════════════════════════════════
+       BUTTONS
+    ════════════════════════════════════════════════════════════ */
+    .btn {
+      display:inline-flex; align-items:center; gap:8px;
+      padding:9px 20px; border-radius:99px;
+      font-size:.875rem; font-weight:600; font-family:inherit;
+      border:none; cursor:pointer;
+      transition: all var(--transition);
+      position:relative; overflow:hidden;
+      white-space:nowrap;
+    }
+    .btn:disabled { opacity:.5; cursor:not-allowed; }
+    .btn:not(:disabled):active { transform:scale(0.97); }
+
+    .btn-primary {
+      background: var(--grad-main);
+      color:#fff;
+      box-shadow: 0 4px 20px rgba(124,58,237,0.35);
+    }
+    .btn-primary:not(:disabled):hover {
+      box-shadow:0 6px 28px rgba(124,58,237,0.55);
+      transform:translateY(-1px);
+    }
+    .btn-full { width:100%; justify-content:center; border-radius:var(--radius-sm); padding:12px; font-size:1rem; }
+
+    .btn-amber {
+      background:var(--grad-amber); color:#fff;
+      box-shadow:0 4px 16px rgba(217,119,6,0.3);
+    }
+    .btn-amber:not(:disabled):hover { box-shadow:0 6px 24px rgba(217,119,6,0.45); transform:translateY(-1px); }
+
+    .btn-emerald {
+      background:var(--grad-green); color:#fff;
+      box-shadow:0 4px 16px rgba(5,150,105,0.3);
+    }
+    .btn-emerald:not(:disabled):hover { box-shadow:0 6px 24px rgba(5,150,105,0.45); transform:translateY(-1px); }
+
+    .btn-ghost {
+      background:var(--bg-card); color:var(--text-2);
+      border:1px solid var(--border);
+    }
+    .btn-ghost:not(:disabled):hover { background:var(--bg-card-h); border-color:var(--border-h); color:var(--text); }
+
+    .btn-icon-only {
+      background:none; border:none; cursor:pointer;
+      color:var(--text-3); font-size:1rem; padding:4px 8px;
+      border-radius:var(--radius-sm); transition:all var(--transition);
+    }
+    .btn-icon-only:hover { background:var(--bg-card-h); color:var(--text-2); }
+
+    /* ════════════════════════════════════════════════════════════
+       SPINNER
+    ════════════════════════════════════════════════════════════ */
+    .spinner {
+      width:18px; height:18px;
+      border:2px solid rgba(255,255,255,0.3);
+      border-top-color:#fff;
+      border-radius:50%;
+      animation:spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform:rotate(360deg); } }
+
+    /* ════════════════════════════════════════════════════════════
+       LAYOUT
+    ════════════════════════════════════════════════════════════ */
+    main {
+      position:relative; z-index:1;
+      max-width:1300px; margin:0 auto;
+      padding:32px 24px 80px;
+      display:flex; flex-direction:column; gap:24px;
+    }
+
+    .grid-2col {
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:24px;
+      align-items:start;
+    }
+    @media(max-width:900px) { .grid-2col { grid-template-columns:1fr; } }
+
+    .col-form    { display:flex; flex-direction:column; gap:20px; }
+    .col-activity{ display:flex; flex-direction:column; gap:16px; }
+
+    /* ════════════════════════════════════════════════════════════
+       CARD
+    ════════════════════════════════════════════════════════════ */
+    .card {
+      background:var(--bg-card);
+      border:1px solid var(--border);
+      border-radius:var(--radius);
+      padding:24px;
+      box-shadow:var(--shadow);
+      transition:border-color var(--transition);
+    }
+    .card:hover { border-color:var(--border-h); }
+    .card-compact { padding:18px; }
+
+    .card-header {
+      display:flex; align-items:center; gap:10px;
+      margin-bottom:20px;
+    }
+    .card-header h2 { font-size:1.1rem; font-weight:700; }
+    .card-header h3 { font-size:.95rem; font-weight:600; color:var(--text-2); }
+    .card-icon { font-size:1.2rem; }
+    .card-header .btn-icon-only { margin-left:auto; }
+
+    /* ════════════════════════════════════════════════════════════
+       STEPS
+    ════════════════════════════════════════════════════════════ */
+    .steps {
+      display:flex; align-items:center; gap:0;
+      background:var(--bg-card); border:1px solid var(--border);
+      border-radius:var(--radius); padding:16px 20px;
+    }
+    .step { display:flex; flex-direction:column; align-items:center; gap:4px; flex:1; }
+    .step-num {
+      width:32px; height:32px; border-radius:50%;
+      display:flex; align-items:center; justify-content:center;
+      font-size:.8rem; font-weight:700;
+      background:rgba(255,255,255,0.06); border:2px solid var(--border);
+      color:var(--text-3); transition:all var(--transition);
+    }
+    .step-label { font-size:.7rem; color:var(--text-3); font-weight:500; transition:color var(--transition); }
+    .step-line  { flex:2; height:2px; background:var(--border); margin-bottom:22px; transition:background var(--transition); }
+
+    .step.active .step-num  { background:var(--grad-main); border-color:transparent; color:#fff; box-shadow:0 0 14px rgba(124,58,237,0.5); }
+    .step.active .step-label{ color:var(--purple-l); }
+    .step.done   .step-num  { background:var(--emerald); border-color:transparent; color:#fff; }
+    .step.done   .step-label{ color:var(--emerald-l); }
+    .step.done + .step-line { background:var(--emerald); }
+    .step.active + .step-line{ background:var(--grad-main); }
+
+    /* ════════════════════════════════════════════════════════════
+       FORM ELEMENTS
+    ════════════════════════════════════════════════════════════ */
+    .form-group { display:flex; flex-direction:column; gap:8px; margin-bottom:16px; }
+    .form-group:last-child { margin-bottom:0; }
+
+    label {
+      font-size:.82rem; font-weight:600; color:var(--text-2);
+      letter-spacing:.02em; text-transform:uppercase;
+    }
+
+    input[type="text"], textarea {
+      background:rgba(255,255,255,0.05);
+      border:1px solid var(--border);
+      border-radius:var(--radius-sm);
+      color:var(--text);
+      font-family:inherit; font-size:.95rem;
+      padding:12px 16px;
+      width:100%;
+      outline:none;
+      transition:border-color var(--transition), box-shadow var(--transition);
+    }
+    input[type="text"]:focus, textarea:focus {
+      border-color:var(--purple);
+      box-shadow:0 0 0 3px rgba(124,58,237,0.15);
+    }
+    input::placeholder, textarea::placeholder { color:var(--text-3); }
+    textarea { resize:vertical; min-height:110px; line-height:1.6; }
+
+    .input-hint { font-size:.77rem; color:var(--text-3); }
+    .char-count { font-size:.77rem; color:var(--text-3); text-align:right; }
+
+    /* ════════════════════════════════════════════════════════════
+       STAR RATING
+    ════════════════════════════════════════════════════════════ */
+    .star-rating {
+      display:flex;
+      flex-direction:row-reverse;
+      justify-content:flex-start;
+      gap:4px;
+      width:fit-content;
+    }
+    .star-rating input[type="radio"] { display:none; }
+    .star-rating label {
+      font-size:2rem; color:var(--text-3); cursor:pointer;
+      transition:color .15s, transform .15s, text-shadow .15s;
+      line-height:1;
+    }
+    .star-rating label:hover { transform:scale(1.15); }
+
+    /* Stelle precedenti (DOM-order >) quando una è selezionata/hovata */
+    .star-rating input:checked ~ label,
+    .star-rating label:hover,
+    .star-rating label:hover ~ label {
+      color:var(--amber);
+      text-shadow:0 0 12px rgba(245,158,11,0.6);
+    }
+
+    /* ════════════════════════════════════════════════════════════
+       IPFS NOTE
+    ════════════════════════════════════════════════════════════ */
+    .ipfs-note {
+      display:flex; align-items:center; gap:10px;
+      background:rgba(99,102,241,0.08); border:1px solid rgba(99,102,241,0.2);
+      border-radius:var(--radius-sm); padding:10px 14px;
+      font-size:.82rem; color:var(--text-2);
+    }
+    .ipfs-icon { font-size:1.1rem; }
+
+    /* ════════════════════════════════════════════════════════════
+       CONTRACTS LIST
+    ════════════════════════════════════════════════════════════ */
+    .contract-list { display:flex; flex-direction:column; gap:6px; }
+    .contract-item {
+      display:flex; justify-content:space-between; align-items:center; gap:8px;
+      padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.05);
+    }
+    .contract-item:last-child { border-bottom:none; }
+    .contract-name { font-size:.8rem; color:var(--text-2); font-weight:500; }
+    .contract-addr {
+      font-family:'JetBrains Mono',monospace; font-size:.75rem;
+      color:var(--purple-l); background:rgba(124,58,237,0.1);
+      padding:2px 8px; border-radius:4px; cursor:pointer;
+      transition:background var(--transition);
+    }
+    .contract-addr:hover { background:rgba(124,58,237,0.2); }
+    .loading-placeholder { font-size:.85rem; color:var(--text-3); font-style:italic; }
+
+    /* ════════════════════════════════════════════════════════════
+       STATS GRID
+    ════════════════════════════════════════════════════════════ */
+    .stats-grid {
+      display:grid; grid-template-columns:1fr 1fr; gap:12px;
+    }
+    .stat-card {
+      background:var(--bg-card); border:1px solid var(--border);
+      border-radius:var(--radius); padding:18px 20px;
+      text-align:center; transition:border-color var(--transition);
+    }
+    .stat-card:hover { border-color:var(--border-h); }
+    .stat-label { font-size:.72rem; color:var(--text-3); font-weight:600; text-transform:uppercase; letter-spacing:.06em; margin-bottom:6px; }
+    .stat-value { font-size:2rem; font-weight:800; background:var(--grad-main); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; line-height:1; }
+    .stat-unit  { font-size:.72rem; color:var(--text-3); margin-top:4px; }
+
+    /* ════════════════════════════════════════════════════════════
+       ACTIVITY LOG
+    ════════════════════════════════════════════════════════════ */
+    .card-log { max-height:340px; display:flex; flex-direction:column; }
+    .activity-log {
+      overflow-y:auto; display:flex; flex-direction:column; gap:4px;
+      max-height:260px; padding-right:4px;
+    }
+    .activity-log::-webkit-scrollbar { width:4px; }
+    .activity-log::-webkit-scrollbar-track { background:transparent; }
+    .activity-log::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+
+    .log-empty { font-size:.82rem; color:var(--text-3); font-style:italic; text-align:center; padding:20px 0; }
+
+    .log-item {
+      display:grid; grid-template-columns:auto 1fr auto;
+      align-items:start; gap:8px;
+      padding:8px 10px; border-radius:var(--radius-sm);
+      font-size:.8rem; background:rgba(255,255,255,0.025);
+      border-left:2px solid transparent;
+      animation:log-in .25s ease-out;
+    }
+    @keyframes log-in { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:none; } }
+
+    .log-success { border-left-color:var(--emerald); }
+    .log-error   { border-left-color:var(--red);     }
+    .log-warning { border-left-color:var(--amber);   }
+    .log-loading { border-left-color:var(--blue);    }
+
+    .log-icon    { font-size:.9rem; padding-top:1px; }
+    .log-message { color:var(--text-2); word-break:break-all; }
+    .log-time    { font-size:.7rem; color:var(--text-3); white-space:nowrap; font-family:'JetBrains Mono',monospace; padding-top:2px; }
+
+    /* ════════════════════════════════════════════════════════════
+       DEV PANEL
+    ════════════════════════════════════════════════════════════ */
+    .dev-panel {
+      background:rgba(245,158,11,0.04);
+      border:1px solid rgba(245,158,11,0.2);
+      border-radius:var(--radius);
+      overflow:hidden;
+    }
+    .dev-panel-header {
+      display:flex; align-items:center; gap:12px;
+      padding:14px 20px; cursor:pointer;
+      user-select:none; transition:background var(--transition);
+    }
+    .dev-panel-header:hover { background:rgba(245,158,11,0.06); }
+    .dev-icon   { font-size:1.1rem; }
+    .dev-panel-header span:nth-child(2) { font-weight:600; font-size:.95rem; flex:1; }
+    .dev-chevron { font-size:.8rem; color:var(--text-3); transition:transform var(--transition); }
+
+    .dev-panel-body { padding:0 20px 20px; }
+    .dev-panel-body.collapsed { display:none; }
+
+    .dev-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:20px; }
+
+    .dev-section h4  { font-size:.88rem; font-weight:700; color:var(--amber); margin-bottom:6px; }
+    .dev-desc        { font-size:.8rem; color:var(--text-3); margin-bottom:14px; line-height:1.5; }
+    .dev-review-id   { font-size:.8rem; color:var(--text-2); margin-bottom:10px; font-family:'JetBrains Mono',monospace; }
+    .dev-review-id span { color:var(--blue-l); font-weight:600; }
+
+    /* ════════════════════════════════════════════════════════════
+       TOAST NOTIFICATIONS
+    ════════════════════════════════════════════════════════════ */
+    #toast-container {
+      position:fixed; top:80px; right:24px; z-index:9999;
+      display:flex; flex-direction:column; gap:10px;
+      pointer-events:none;
+    }
+    .toast {
+      max-width:380px; padding:14px 18px;
+      border-radius:var(--radius-sm);
+      backdrop-filter:blur(20px);
+      -webkit-backdrop-filter:blur(20px);
+      border:1px solid rgba(255,255,255,0.12);
+      font-size:.85rem; font-weight:500; color:var(--text);
+      box-shadow:var(--shadow-lg);
+      pointer-events:all;
+      opacity:0; transform:translateX(20px);
+      transition:opacity .35s ease, transform .35s ease;
+    }
+    .toast.visible { opacity:1; transform:none; }
+
+    /* ════════════════════════════════════════════════════════════
+       FOOTER
+    ════════════════════════════════════════════════════════════ */
+    footer {
+      position:relative; z-index:1;
+      text-align:center; padding:24px;
+      font-size:.78rem; color:var(--text-3);
+      border-top:1px solid var(--border);
+    }
+
+    /* ════════════════════════════════════════════════════════════
+       UTILITY
+    ════════════════════════════════════════════════════════════ */
+    .hidden { display:none !important; }
+  </style>
+</head>
+<body>
+
+  <!-- Background decoration -->
+  <div class="orb orb-1" aria-hidden="true"></div>
+  <div class="orb orb-2" aria-hidden="true"></div>
+  <div class="orb orb-3" aria-hidden="true"></div>
+
+  <!-- Toast container -->
+  <div id="toast-container" aria-live="polite"></div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       HEADER
+  ══════════════════════════════════════════════════════════ -->
+  <header>
+    <div class="header-inner">
+      <div class="logo">
+        <span class="logo-icon" aria-hidden="true">⬡</span>
+        <span class="logo-text">TechRate</span>
+        <span class="logo-sub">Blockchain Demo</span>
+      </div>
+      <div class="header-right">
+        <div id="network-badge" class="network-badge hidden" role="status">⬡ Hardhat Local</div>
+        <button id="btn-connect" class="btn btn-primary" type="button">
+          <span aria-hidden="true">🦊</span> Connetti MetaMask
+        </button>
+        <div id="wallet-info" class="wallet-info hidden" role="status" aria-label="Wallet connesso">
+          <div class="wallet-dot" aria-hidden="true"></div>
+          <span id="wallet-address"></span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ══════════════════════════════════════════════════════════
+       MAIN
+  ══════════════════════════════════════════════════════════ -->
+  <main>
+
+    <!-- ── Progress Steps ─────────────────────────────────── -->
+    <div class="steps" role="list" aria-label="Progresso invio recensione">
+      <div class="step pending" id="step-1" role="listitem">
+        <div class="step-num">1</div>
+        <div class="step-label">Wallet</div>
+      </div>
+      <div class="step-line"></div>
+      <div class="step pending" id="step-2" role="listitem">
+        <div class="step-num">2</div>
+        <div class="step-label">PoP</div>
+      </div>
+      <div class="step-line"></div>
+      <div class="step pending" id="step-3" role="listitem">
+        <div class="step-num">3</div>
+        <div class="step-label">IPFS</div>
+      </div>
+      <div class="step-line"></div>
+      <div class="step pending" id="step-4" role="listitem">
+        <div class="step-num">4</div>
+        <div class="step-label">On-chain</div>
+      </div>
+    </div>
+
+    <div class="grid-2col">
+
+      <!-- ══ COLONNA SINISTRA: Form ══════════════════════════ -->
+      <div class="col-form">
+
+        <!-- Card: Prodotto -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-icon" aria-hidden="true">📦</span>
+            <h2>Prodotto Acquistato</h2>
+          </div>
+          <div class="form-group">
+            <label for="productId">Product ID</label>
+            <input
+              type="text"
+              id="productId"
+              placeholder="es. LAPTOP-XPS-9510"
+              autocomplete="off"
+              spellcheck="false"
+            >
+            <div class="input-hint">
+              Deve corrispondere al prodotto nel Proof of Purchase firmato dall'Issuer
+            </div>
+          </div>
+        </div>
+
+        <!-- Card: Recensione -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-icon" aria-hidden="true">✍️</span>
+            <h2>Scrivi la Recensione</h2>
+          </div>
+
+          <div class="form-group">
+            <label>Valutazione</label>
+            <!-- Stelle in ordine inverso nel DOM per la magia CSS -->
+            <div class="star-rating" id="star-rating" role="radiogroup" aria-label="Valutazione da 1 a 5 stelle">
+              <input type="radio" id="s5" name="score" value="5" aria-label="5 stelle">
+              <label for="s5" title="5 stelle">★</label>
+              <input type="radio" id="s4" name="score" value="4" aria-label="4 stelle">
+              <label for="s4" title="4 stelle">★</label>
+              <input type="radio" id="s3" name="score" value="3" checked aria-label="3 stelle">
+              <label for="s3" title="3 stelle">★</label>
+              <input type="radio" id="s2" name="score" value="2" aria-label="2 stelle">
+              <label for="s2" title="2 stelle">★</label>
+              <input type="radio" id="s1" name="score" value="1" aria-label="1 stella">
+              <label for="s1" title="1 stella">★</label>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="reviewText">Testo della recensione</label>
+            <textarea
+              id="reviewText"
+              rows="5"
+              placeholder="Descrivi la tua esperienza con il prodotto (min. 10 caratteri)..."
+              maxlength="2000"
+              aria-describedby="char-counter"
+            ></textarea>
+            <div class="char-count" id="char-counter">
+              <span id="char-count">0</span> / 2000 caratteri
+            </div>
+          </div>
+
+          <div class="form-group">
+            <div class="ipfs-note">
+              <span class="ipfs-icon" aria-hidden="true">🌐</span>
+              <span>Il testo sarà caricato su <strong>IPFS</strong> (simulato con SHA-256). Il CID viene registrato on-chain nel <code>ReviewContract</code>.</span>
+            </div>
+          </div>
+
+          <button id="btn-submit" class="btn btn-primary btn-full" type="button" disabled>
+            <span id="btn-submit-text">Connetti prima il wallet</span>
+            <div id="btn-submit-spinner" class="spinner hidden" aria-hidden="true"></div>
+          </button>
+        </div>
+
+      </div><!-- /col-form -->
+
+      <!-- ══ COLONNA DESTRA: Info + Log ══════════════════════ -->
+      <div class="col-activity">
+
+        <!-- Indirizzi contratti -->
+        <div class="card card-compact">
+          <div class="card-header">
+            <span class="card-icon" aria-hidden="true">📋</span>
+            <h3>Contratti Deployati</h3>
+          </div>
+          <div id="contract-list" class="contract-list">
+            <div class="loading-placeholder">Caricamento deployment.json...</div>
+          </div>
+        </div>
+
+        <!-- Stats -->
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Reputazione</div>
+            <div class="stat-value" id="stat-reputation" aria-live="polite">—</div>
+            <div class="stat-unit">punti R</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Token RWT</div>
+            <div class="stat-value" id="stat-rwt" aria-live="polite">—</div>
+            <div class="stat-unit">balance</div>
+          </div>
+        </div>
+
+        <!-- Activity Log -->
+        <div class="card card-log">
+          <div class="card-header">
+            <span class="card-icon" aria-hidden="true">⚡</span>
+            <h3>Attività</h3>
+            <button id="btn-clear-log" class="btn-icon-only" type="button" aria-label="Pulisci log">✕</button>
+          </div>
+          <div id="activity-log" class="activity-log" role="log" aria-label="Log attività" aria-live="polite">
+            <div class="log-empty">Le attività appariranno qui...</div>
+          </div>
+        </div>
+
+      </div><!-- /col-activity -->
+
+    </div><!-- /grid-2col -->
+
+    <!-- ══════════════════════════════════════════════════════
+         DEV / DEMO PANEL
+    ══════════════════════════════════════════════════════ -->
+    <section class="dev-panel" aria-label="Pannello sviluppatore">
+      <div class="dev-panel-header" id="dev-panel-toggle" role="button" tabindex="0" aria-expanded="true" aria-controls="dev-panel-body">
+        <span class="dev-icon" aria-hidden="true">🛠</span>
+        <span>Pannello Dev / Demo</span>
+        <span class="dev-chevron" id="dev-chevron" aria-hidden="true">▼</span>
+      </div>
+      <div class="dev-panel-body" id="dev-panel-body">
+        <div class="dev-grid">
+
+          <div class="dev-section">
+            <h4>⏩ Simulazione Tempo</h4>
+            <p class="dev-desc">
+              Avanza la blockchain locale di <strong>31 giorni</strong> tramite
+              <code>evm_increaseTime</code> + <code>evm_mine</code>. La
+              Curation Window (30gg) si chiude senza modificare i contratti.
+            </p>
+            <button id="btn-time-travel" class="btn btn-amber" type="button">
+              <span aria-hidden="true">⏩</span> Salta 31 Giorni
+            </button>
+          </div>
+
+          <div class="dev-section">
+            <h4>🏆 Finalizza Curation</h4>
+            <p class="dev-desc">
+              Chiude la finestra di curation per l'ultima recensione inviata,
+              aggiorna le reputazioni dei voter e distribuisce i token reward.
+            </p>
+            <div class="dev-review-id">
+              Ultimo Review ID: <span id="last-review-id">—</span>
+            </div>
+            <button id="btn-finalize" class="btn btn-emerald" type="button" disabled>
+              <span aria-hidden="true">🏆</span> Finalizza Curation
+            </button>
+          </div>
+
+          <div class="dev-section">
+            <h4>🔄 Aggiorna Stato</h4>
+            <p class="dev-desc">
+              Rilegge reputazione e bilancio RWT on-chain per il wallet connesso.
+              Utile dopo la finalizzazione per vedere i reward ricevuti.
+            </p>
+            <button id="btn-refresh" class="btn btn-ghost" type="button">
+              <span aria-hidden="true">🔄</span> Aggiorna Stats
+            </button>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    <p>TechRate Protocol — Demo Progetto Universitario Blockchain &nbsp;|&nbsp; Hardhat Local Network (chainId 31337)</p>
+  </footer>
+
+  <script src="app.js" defer></script>
+</body>
+</html>

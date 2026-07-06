@@ -1,0 +1,25 @@
+{
+  "name": "progetto-blockchain",
+  "version": "1.0.0",
+  "description": "",
+  "main": "ln1p.test.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ignition": "^3.1.8",
+    "@nomicfoundation/hardhat-toolbox-viem": "^5.0.7",
+    "@types/node": "^22.20.0",
+    "forge-std": "github:foundry-rs/forge-std#v1.9.4",
+    "hardhat": "^3.9.1",
+    "typescript": "~6.0.3",
+    "viem": "^2.54.3"
+  },
+  "dependencies": {
+    "solady": "^0.1.26"
+  }
+}
