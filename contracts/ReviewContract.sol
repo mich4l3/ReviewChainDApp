@@ -353,6 +353,7 @@ contract ReviewContract {
 
         string memory oldCid = rv.cid;
         rv.cid = newCid;
+        rv.modified = true;  // enforces the once-only modification limit (WP2 S2.4)
         rv.windowStart = uint64(block.timestamp); // "reintroduces the review into the curation queue as new content"
         rv.upvoteWeight = 0;
         rv.downvoteWeight = 0;
