@@ -125,10 +125,14 @@ app.post("/request-pop", async (req, res) => {
     // nel controllo: keccak256(bytes(productID)) != pop.productIdHash
     const productIdHash = ethers.keccak256(ethers.toUtf8Bytes(trimmedProductId));
 
-    // ── 2. Nullifier casuale (bytes32) ────────────────────────────────────────
     // Anti-replay: NullifierRegistry.spend() reverte se questo valore è già
     // stato usato in una precedente submitReview(). Ogni PoP è monouso.
-    const nullifier = ethers.hexlify(ethers.randomBytes(32));
+    // Conformemente al WP2/WP3, il nullifier è generato in modo deterministico:
+    // Nullifier = Hash(User_ID + Universal_ProductID + Secret_Salt)
+    const SECRET_SALT = "TechRate_Issuer_Secret_Salt_v1";
+    const nullifier = ethers.keccak256(
+      ethers.toUtf8Bytes(userAddress.toLowerCase() + trimmedProductId + SECRET_SALT)
+    );
 
     // ── 3. SD-JWT selective disclosure digests (bytes32[]) ────────────────────
     // In un sistema SD-JWT reale questi sarebbero H(salt || valore_segreto)
