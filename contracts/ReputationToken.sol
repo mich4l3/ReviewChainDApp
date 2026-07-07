@@ -17,8 +17,8 @@ pragma solidity ^0.8.24;
 ///      balance without touching the main application logic -- the same
 ///      Public Verifiability rationale behind NullifierRegistry.
 contract ReputationToken {
-    string public constant name = "ReviewToken";    //come lo chiamiamo sto token?
-    string public constant symbol = "RWT";
+    string public constant name = "ReputationToken";    
+    string public constant symbol = "RPT";
     uint8 public constant decimals = 18;
 
     address public owner;
