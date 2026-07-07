@@ -1,57 +1,61 @@
-# Sample Hardhat 3 Project (`node:test` and `viem`)
+# TechRate / ReviewChain DApp
 
-This project showcases a Hardhat 3 project using the native Node.js test runner (`node:test`) and the `viem` library for Ethereum interactions.
-
-To learn more about Hardhat 3, please visit the [Getting Started guide](https://hardhat.org/docs/getting-started#getting-started-with-hardhat-3). To share your feedback, join our [Hardhat 3](https://hardhat.org/hardhat3-telegram-group) Telegram group or [open an issue](https://github.com/NomicFoundation/hardhat/issues/new) in our GitHub issue tracker.
+This project implements the Proof of Concept for the decentralized reputation system defined in the Workpackages (WP2/WP3/WP4). It showcases a hybrid Web2.5 architecture, combining a native Node.js test runner (`node:test`), Hardhat 3, the `viem` library for EVM interactions, and a purely client-side frontend.
 
 ## Project Overview
 
-This example project includes:
+This repository includes three main macro-components:
 
-- A simple Hardhat configuration file.
-- Foundry-compatible Solidity unit tests.
-- TypeScript integration tests using [`node:test`](nodejs.org/api/test.html), the new Node.js native test runner, and [`viem`](https://viem.sh/).
-- Examples demonstrating how to connect to different types of networks, including locally simulating OP mainnet.
+1. **Smart Contracts (`contracts/`)**: Solidity contracts defining the Identity Registries, Nullifier protection, Review lifecycle, and the Soulbound `ReputationToken`.
+2. **Issuer Backend (`issuer-server/`)**: A lightweight Node.js microservice simulating an e-commerce platform that issues gas-optimized raw ECDSA Proof of Purchase (PoP) credentials.
+3. **Frontend (`frontend/`)**: A Vanilla JS static dApp that orchestrates MetaMask authentication, PoP requests, and on-chain submissions.
 
-## Usage
+## Usage & Testing
 
 ### Running Tests
 
-To run all the tests in the project, execute the following command:
+To run the comprehensive integration test suite (29 tests validating S2.3, S2.4, S2.6, and SBT enforcement), execute:
 
 ```shell
-npx hardhat test
-```
-
-You can also selectively run the Solidity or `node:test` tests:
-
-```shell
-npx hardhat test solidity
 npx hardhat test nodejs
 ```
 
-### Make a deployment to Sepolia
+*(Note: The tests use isolated local networks per block to allow programmatic time travel without polluting state.)*
 
-This project includes an example Ignition module to deploy the contract. You can deploy this module to a locally simulated chain or to Sepolia.
+### Running the Full Local Simulation
 
-To run the deployment to a local chain:
+To experience the complete flow of the application locally, you need to spin up the smart contracts, the backend issuer, and the frontend server. 
 
+**Run these commands in separate terminals:**
+
+#### 1. Start the Local Blockchain
+Start an empty Hardhat node instance. This simulates the Ethereum network locally.
 ```shell
-npx hardhat ignition deploy ignition/modules/Counter.ts
+npx hardhat node
 ```
 
-To run the deployment to Sepolia, you need an account with funds to send the transaction. The provided Hardhat configuration includes a Configuration Variable called `SEPOLIA_PRIVATE_KEY`, which you can use to set the private key of the account you want to use.
-
-You can set the `SEPOLIA_PRIVATE_KEY` variable using the `hardhat-keystore` plugin or by setting it as an environment variable.
-
-To set the `SEPOLIA_PRIVATE_KEY` config variable using `hardhat-keystore`:
-
+#### 2. Deploy the Smart Contracts
+In a new terminal, run the deployment script. This deploys the 5 core contracts to your local node, wires them together, and generates the `deployment.json` file needed by the backend and frontend.
 ```shell
-npx hardhat keystore set SEPOLIA_PRIVATE_KEY
+npx hardhat run scripts/deploy.js --network localhost
 ```
 
-After setting the variable, you can run the deployment with the Sepolia network:
-
+#### 3. Start the Issuer Backend
+Navigate to the issuer directory and start the Web2 e-commerce simulation server. It reads the `deployment.json` to configure itself and starts listening on port 3000.
 ```shell
-npx hardhat ignition deploy --network sepolia ignition/modules/Counter.ts
+cd issuer-server
+node server.js
 ```
+
+*(Optional)* You can verify the issuer is running correctly and serving the correct addresses by pinging its health endpoint:
+```shell
+curl -s http://localhost:3000/health | python -m json.tool
+```
+
+#### 4. Start the Frontend dApp
+Finally, start the static web server for the frontend. 
+```shell
+node frontend/serve.js
+```
+
+Now, open your browser and navigate to **`http://localhost:8080`**. Ensure your MetaMask wallet is connected to the Localhost network (`127.0.0.1:8545`, Chain ID `31337`) and try submitting a review!
