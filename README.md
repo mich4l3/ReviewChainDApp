@@ -14,7 +14,7 @@ This repository includes three main macro-components:
 
 ### Running Tests
 
-To run the comprehensive integration test suite (29 tests validating S2.3, S2.4, S2.6, and SBT enforcement), execute:
+To run the comprehensive integration test suite (29 tests validating and SBT enforcement), execute:
 
 ```shell
 npx hardhat test nodejs
