@@ -2,25 +2,34 @@
 pragma solidity ^0.8.24;
 
 import {IdentityRegistry} from "./IdentityRegistry.sol";
+import {DIDRegistry}      from "./DIDRegistry.sol";
 
 /// @title VendorRegistry
 /// @notice Implements Seller Onboarding (WP2 S2.2.1) and the
 ///         product-to-vendor binding used both by seller/product
 ///         reputation aggregation (WP2 S2.6) and by the Vendor Reply
 ///         authorization check (WP2 S2.4, "Vendor Reply Mechanism").
+///
+/// @dev DID integration: a vendor must have an active DID registered in
+///      the DIDRegistry before they can register on this contract. This
+///      anchors the vendor's on-chain identity to their W3C DID, enabling
+///      future key rotation via the DIDRegistry without losing their
+///      accumulated reputation.
+///      The CA signature check (ecrecover over the Vendor_VC hash) is
+///      kept on-chain because vendor onboarding is a direct operation
+///      performed by the vendor themselves — it does not pass through the
+///      DApp relayer.
 contract VendorRegistry {
     IdentityRegistry public immutable identityRegistry;
+    DIDRegistry      public immutable didRegistry;
 
     struct Vendor {
-        bool active;
+        bool   active;
         string legalName;
         string vatNumber;
     }
 
-    mapping(address => Vendor) public vendors;
-
-    /// productIdHash = keccak256(bytes(productID)) -> owning vendor.
-    // bytes32 intendiamo l'hash del productID
+    mapping(address => Vendor)  public vendors;
     mapping(bytes32 => address) public vendorOfProduct;
 
     event VendorRegistered(address indexed vendorWallet, string legalName, string vatNumber);
@@ -30,9 +39,11 @@ contract VendorRegistry {
     error InvalidCASignature();
     error WalletMismatch();
     error ProductAlreadyRegistered();
+    error VendorDIDNotActive();
 
-    constructor(address identityRegistry_) {
+    constructor(address identityRegistry_, address didRegistry_) {
         identityRegistry = IdentityRegistry(identityRegistry_);
+        didRegistry      = DIDRegistry(didRegistry_);
     }
 
     modifier onlyVendor() {
@@ -41,26 +52,28 @@ contract VendorRegistry {
     }
 
     /// @notice On-chain Vendor Registration (WP2 S2.2.1, Step 1.4).
-    /// @dev Rather than parsing the full Vendor_VC JSON on-chain (gas
-    ///      prohibitive, as WP2 itself notes for the PoP), the caller
-    ///      supplies the already-parsed credential fields plus the CA's
-    ///      (v, r, s) ECDSA signature over their canonical hash. See
-    ///      ReviewContract._verifyPresentation for the same pattern
-    ///      applied to the Proof of Purchase.
+    /// @dev The vendor must already have an active DID in DIDRegistry
+    ///      before calling this function. The CA signature is still
+    ///      verified on-chain via ecrecover (secp256k1) because vendor
+    ///      onboarding is a direct wallet operation, not relayed by the
+    ///      DApp backend.
     function registerVendor(
         address vendorWallet,
         string calldata legalName,
         string calldata vatNumber,
-        uint8 v,    //recovery identifier (dato che restituisce due chiavi pubbliche dato che la curva è simmetrica, dice quale scegliere)
-        bytes32 r,  //r ed s sono i valori della firma
+        uint8 v,
+        bytes32 r,
         bytes32 s
     ) external {
-        // Step 1.4: "ensures the vendorWallet bound within the credential
-        // strictly matches the address transmitting the transaction".
+        // Wallet binding: the transaction sender must match the credential subject.
         if (vendorWallet != msg.sender) revert WalletMismatch();
 
+        // DID check: the vendor must have a registered and active DID.
+        if (!didRegistry.isActiveByOwner(vendorWallet)) revert VendorDIDNotActive();
+
+        // Verify the CA's ECDSA signature over the canonical credential hash.
         bytes32 credentialHash = keccak256(abi.encode(vendorWallet, legalName, vatNumber));
-        address recoveredCA = ecrecover(credentialHash, v, r, s);
+        address recoveredCA    = ecrecover(credentialHash, v, r, s);
         if (!identityRegistry.isCA(recoveredCA)) revert InvalidCASignature();
 
         vendors[vendorWallet] = Vendor({active: true, legalName: legalName, vatNumber: vatNumber});
@@ -68,10 +81,6 @@ contract VendorRegistry {
     }
 
     /// @notice Registers a productID under the caller's vendor catalog.
-    ///         Required for ReviewContract to (a) attribute a review's
-    ///         contribution to the correct seller reputation aggregate,
-    ///         and (b) authorize that vendor's replies to reviews of that
-    ///         product (WP2 S2.4, "Authorization" check).
     function registerProduct(string calldata productID) external onlyVendor {
         bytes32 productIdHash = keccak256(bytes(productID));
         if (vendorOfProduct[productIdHash] != address(0)) revert ProductAlreadyRegistered();
