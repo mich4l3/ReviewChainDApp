@@ -315,6 +315,7 @@ async function submitReview() {
 
     const tx = await reviewContract.submitReview(
       userDid,
+      pop.vendorDid,
       productId,
       cid,
       score,

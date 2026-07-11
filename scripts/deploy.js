@@ -131,12 +131,13 @@ async function main() {
   ]);
 
   // ── 1.5 DIDRegistry ───────────────────────────────────────────────────────
-  const didRegistry = await deploy(deployer, "DIDRegistry", []);
+  const didRegistry = await deploy(deployer, "DIDRegistry", [
+    await identityRegistry.getAddress(),
+  ]);
 
   // ── 2. VendorRegistry ─────────────────────────────────────────────────────
   const vendorRegistry = await deploy(deployer, "VendorRegistry", [
     await identityRegistry.getAddress(),
-    await didRegistry.getAddress(),
   ]);
 
   // ── 3. NullifierRegistry ──────────────────────────────────────────────────
@@ -215,6 +216,29 @@ async function main() {
   }
   console.log("\n  ✔   Verifica wiring on-chain: OK");
 
+  // ── 7.5 Vendor Onboarding Demo ───────────────────────────────────────────
+  console.log("\n🏬  Registrazione Vendor (Demo)...");
+  const vendorWallet = new ethers.Wallet(HARDHAT_ACCOUNTS[3].privateKey, provider);
+  const vendorDID = "did:ethr:" + vendorWallet.address.toLowerCase();
+  
+  const vendorRegistryArtifact = loadArtifact("VendorRegistry");
+  const vendorRegistryInstance = new ethers.Contract(
+    await vendorRegistry.getAddress(),
+    vendorRegistryArtifact.abi,
+    issuer // Issuer is the sponsor
+  );
+  
+  const txVendor = await vendorRegistryInstance.issuerRegisterVendor(vendorWallet.address, "Demo Vendor S.r.l.", "IT00000000000");
+  await txVendor.wait();
+  
+  const txVendorDID = await didInstance.connect(issuer).issuerRegisterDID(
+    vendorWallet.address, vendorDID, "pubkey-vendor", ""
+  );
+  await txVendorDID.wait();
+  
+  console.log(`  ✅  Vendor registrato: ${vendorWallet.address}`);
+  console.log(`  ✅  Vendor DID: ${vendorDID}`);
+
   // ── 8. Salva deployment.json ──────────────────────────────────────────────
   const deployment = {
     network: "localhost",
@@ -246,6 +270,10 @@ async function main() {
     deployer: {
       address:    deployerWallet.address,
       privateKey: HARDHAT_ACCOUNTS[0].privateKey,
+    },
+    vendor: {
+      address:    vendorWallet.address,
+      did:        vendorDID,
     },
   };
 

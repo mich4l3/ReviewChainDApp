@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {IdentityRegistry} from "./IdentityRegistry.sol";
+
 /// @title DIDRegistry
 /// @notice On-chain registry that associates a W3C Decentralized Identifier
 ///         (DID) string with an Ethereum address and a DID Document.
@@ -38,6 +40,13 @@ contract DIDRegistry {
     error DIDInactive(address owner);
     error DIDAlreadyTaken(string did);
     error InvalidDID();
+    error NotIssuer();
+
+    IdentityRegistry public immutable identityRegistry;
+
+    constructor(address identityRegistry_) {
+        identityRegistry = IdentityRegistry(identityRegistry_);
+    }
 
     // ------------------------------------------------------------------
     // Registration
@@ -58,6 +67,36 @@ contract DIDRegistry {
 
         _documents[msg.sender] = DIDDocument({
             owner:           msg.sender,
+            publicKey:       publicKey,
+            serviceEndpoint: serviceEndpoint,
+            createdAt:       block.timestamp,
+            updatedAt:       block.timestamp,
+            active:          true
+        });
+        _registered[msg.sender] = true;
+        _didToOwner[did] = msg.sender;
+
+        emit DIDRegistered(msg.sender, did, publicKey, block.timestamp);
+    }
+
+    /// @notice Registers a new DID for a specific owner, callable only by an Issuer
+    /// @param owner           The Ethereum address that will own this DID
+    /// @param did             The full DID string, e.g. "did:ethr:0xABCD…".
+    /// @param publicKey       Serialised public key of the DID subject.
+    /// @param serviceEndpoint Optional URL (pass "" to omit).
+    function issuerRegisterDID(
+        address owner,
+        string calldata did,
+        string calldata publicKey,
+        string calldata serviceEndpoint
+    ) external {
+        if (!identityRegistry.isIssuer(msg.sender)) revert NotIssuer();
+        if (_registered[owner])             revert AlreadyRegistered(owner);
+        if (bytes(did).length == 0)         revert InvalidDID();
+        if (_didToOwner[did] != address(0)) revert DIDAlreadyTaken(did);
+
+        _documents[owner] = DIDDocument({
+            owner:           owner,
             publicKey:       publicKey,
             serviceEndpoint: serviceEndpoint,
             createdAt:       block.timestamp,

@@ -87,6 +87,7 @@ app.use(express.json());
  * Body (JSON):
  *   {
  *     "did":       "did:ethr:0x...",  // DID string del reviewer
+ *     "vendorDid": "did:ethr:0x...",  // DID string del vendor
  *     "productId": "SKU-123"          // ID prodotto acquistato (stringa)
  *   }
  *
@@ -94,6 +95,7 @@ app.use(express.json());
  *   {
  *     "issuerWallet":  "0x...",
  *     "did":           "did:ethr:0x...",
+ *     "vendorDid":     "did:ethr:0x...",
  *     "productIdHash": "0x...",  // bytes32
  *     "nullifier":     "0x...",  // bytes32 random
  *     "sdDigests":     ["0x...", "0x..."],  // bytes32[]
@@ -105,6 +107,10 @@ app.use(express.json());
 app.post("/request-pop", async (req, res) => {
   try {
     const { did, productId } = req.body;
+    
+    // In un sistema reale, l'ecommerce ha un database interno che mappa productId -> vendorDid
+    // Per questa demo, usiamo il vendor globale registrato in deploy.js
+    const vendorDid = deployment.vendor.did;
 
     // ── Validazione input ────────────────────────────────────────────────────
     if (!did || typeof did !== "string" || !did.startsWith("did:")) {
@@ -121,8 +127,6 @@ app.post("/request-pop", async (req, res) => {
     const trimmedProductId = productId.trim();
 
     // ── 1. productIdHash = keccak256(bytes(productID)) ────────────────────────
-    // Uguale a quanto fa VendorRegistry.registerProduct() e ReviewContract
-    // nel controllo: keccak256(bytes(productID)) != pop.productIdHash
     const productIdHash = ethers.keccak256(ethers.toUtf8Bytes(trimmedProductId));
 
     // Anti-replay: NullifierRegistry.spend() reverte se questo valore è già
@@ -135,17 +139,10 @@ app.post("/request-pop", async (req, res) => {
     );
 
     // ── 3. SD-JWT selective disclosure digests (bytes32[]) ────────────────────
-    // In un sistema SD-JWT reale questi sarebbero H(salt || valore_segreto)
-    // per ogni claim non divulgato on-chain (indirizzo di spedizione, importo
-    // pagato, ecc.). Il contratto non li interpreta: li include nell'hash
-    // solo per garantire che non siano stati manomessi (WP2 S2.3 Check 3).
-    // Per la demo generiamo digest deterministici ma opachi.
     const sdDigests = [
-      // Simulazione del claim "shipping_address" (non divulgato on-chain)
       ethers.keccak256(
         ethers.toUtf8Bytes(`shipping_address:${did}:${trimmedProductId}`)
       ),
-      // Simulazione del claim "payment_amount" (non divulgato on-chain)
       ethers.keccak256(
         ethers.toUtf8Bytes(`payment_amount:${trimmedProductId}:demo`)
       ),
@@ -154,14 +151,14 @@ app.post("/request-pop", async (req, res) => {
     // ── 4. Hash esatto di _verifyPresentation() ───────────────────────────────
     //
     //   bytes32 h = keccak256(
-    //       abi.encode(did, productIdHash, nullifier, sdDigests)
+    //       abi.encode(did, vendorDid, productIdHash, nullifier, sdDigests)
     //   );
     //
     // ethers.AbiCoder.defaultAbiCoder().encode() replica fedelmente
     // abi.encode() di Solidity con padding a 32 byte per ogni tipo.
     const encoded = abiCoder.encode(
-      ["string", "bytes32", "bytes32", "bytes32[]"],
-      [did, productIdHash, nullifier, sdDigests]
+      ["string", "string", "bytes32", "bytes32", "bytes32[]"],
+      [did, vendorDid, productIdHash, nullifier, sdDigests]
     );
     const hash = ethers.keccak256(encoded);
 
@@ -179,6 +176,7 @@ app.post("/request-pop", async (req, res) => {
     const pop = {
       issuerWallet: issuerWallet.address,
       did:          did,
+      vendorDid:    vendorDid,
       productIdHash,
       nullifier,
       sdDigests,

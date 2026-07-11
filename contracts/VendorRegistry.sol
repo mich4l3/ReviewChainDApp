@@ -21,7 +21,6 @@ import {DIDRegistry}      from "./DIDRegistry.sol";
 ///      DApp relayer.
 contract VendorRegistry {
     IdentityRegistry public immutable identityRegistry;
-    DIDRegistry      public immutable didRegistry;
 
     struct Vendor {
         bool   active;
@@ -29,21 +28,18 @@ contract VendorRegistry {
         string vatNumber;
     }
 
+    // vendorWallet => VendorProfile
     mapping(address => Vendor)  public vendors;
-    mapping(bytes32 => address) public vendorOfProduct;
 
     event VendorRegistered(address indexed vendorWallet, string legalName, string vatNumber);
-    event ProductRegistered(address indexed vendorWallet, bytes32 indexed productIdHash);
 
     error NotAVendor();
     error InvalidCASignature();
     error WalletMismatch();
-    error ProductAlreadyRegistered();
-    error VendorDIDNotActive();
+    error NotIssuer();
 
-    constructor(address identityRegistry_, address didRegistry_) {
+    constructor(address identityRegistry_) {
         identityRegistry = IdentityRegistry(identityRegistry_);
-        didRegistry      = DIDRegistry(didRegistry_);
     }
 
     modifier onlyVendor() {
@@ -51,41 +47,19 @@ contract VendorRegistry {
         _;
     }
 
-    /// @notice On-chain Vendor Registration (WP2 S2.2.1, Step 1.4).
-    /// @dev The vendor must already have an active DID in DIDRegistry
-    ///      before calling this function. The CA signature is still
-    ///      verified on-chain via ecrecover (secp256k1) because vendor
-    ///      onboarding is a direct wallet operation, not relayed by the
-    ///      DApp backend.
-    function registerVendor(
+    /// @notice On-chain Vendor Registration (WP2 S2.2.1).
+    /// @dev Registration is performed directly by the E-Commerce (Issuer)
+    ///      on behalf of the vendor, after the vendor has been vetted off-chain.
+    function issuerRegisterVendor(
         address vendorWallet,
         string calldata legalName,
-        string calldata vatNumber,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
+        string calldata vatNumber
     ) external {
-        // Wallet binding: the transaction sender must match the credential subject.
-        if (vendorWallet != msg.sender) revert WalletMismatch();
-
-        // DID check: the vendor must have a registered and active DID.
-        if (!didRegistry.isActiveByOwner(vendorWallet)) revert VendorDIDNotActive();
-
-        // Verify the CA's ECDSA signature over the canonical credential hash.
-        bytes32 credentialHash = keccak256(abi.encode(vendorWallet, legalName, vatNumber));
-        address recoveredCA    = ecrecover(credentialHash, v, r, s);
-        if (!identityRegistry.isCA(recoveredCA)) revert InvalidCASignature();
+        // Only an authorized Issuer (e-commerce) can register a vendor
+        if (!identityRegistry.isIssuer(msg.sender)) revert NotIssuer();
 
         vendors[vendorWallet] = Vendor({active: true, legalName: legalName, vatNumber: vatNumber});
         emit VendorRegistered(vendorWallet, legalName, vatNumber);
-    }
-
-    /// @notice Registers a productID under the caller's vendor catalog.
-    function registerProduct(string calldata productID) external onlyVendor {
-        bytes32 productIdHash = keccak256(bytes(productID));
-        if (vendorOfProduct[productIdHash] != address(0)) revert ProductAlreadyRegistered();
-        vendorOfProduct[productIdHash] = msg.sender;
-        emit ProductRegistered(msg.sender, productIdHash);
     }
 
     function isVendor(address account) external view returns (bool) {

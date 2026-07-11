@@ -82,7 +82,6 @@ contract ReviewContract {
     uint256 public reviewCount;
 
     mapping(bytes32 => uint256) public reviewIdOfCid;
-    mapping(bytes32 => bytes32) public reviewToProduct;
     mapping(bytes32 => bool)    public hasVendorReplied;
 
     // ------------------------------------------------------------------
@@ -143,6 +142,7 @@ contract ReviewContract {
     error UnknownReview();
     error NotReviewer();
     error ReviewAlreadyRevoked();
+    error RevocationWindowElapsed();
     error ModificationWindowElapsed();
     error ModificationLimitReached();
     error NotAnAuthorizedVendor();
@@ -243,6 +243,7 @@ contract ReviewContract {
     /// @param s           ECDSA signature parameter.
     function submitReview(
         string calldata reviewerDID,
+        string calldata vendorDID,
         string calldata productID,
         string calldata cid,
         uint8           score,
@@ -261,9 +262,9 @@ contract ReviewContract {
         // Ensure caller is the owner of the DID
         if (msg.sender != reviewer) revert NotReviewer();
 
-        // Reconstruct SD-JWT payload hash
+        // Reconstruct SD-JWT payload hash including the vendorDID
         bytes32 productIdHash = keccak256(bytes(productID));
-        bytes32 payloadHash = keccak256(abi.encode(reviewerDID, productIdHash, nullifier, sdDigests));
+        bytes32 payloadHash = keccak256(abi.encode(reviewerDID, vendorDID, productIdHash, nullifier, sdDigests));
 
         // Verify Issuer signature
         address recoveredIssuer = ecrecover(payloadHash, v, r, s);
@@ -274,7 +275,10 @@ contract ReviewContract {
 
         _registerIfNeeded(reviewer);
 
-        address vendor = vendorRegistry.vendorOfProduct(productIdHash);
+        // Resolve vendor address securely from the DID embedded in the PoP
+        DIDRegistry.DIDDocument memory vendorDoc = didRegistry.resolveDID(vendorDID);
+        if (!vendorDoc.active) revert DIDNotActive();
+        address vendor = vendorDoc.owner;
 
         reviewCount++;
         reviewId = reviewCount;
@@ -298,7 +302,6 @@ contract ReviewContract {
 
         bytes32 cidHash = keccak256(bytes(cid));
         reviewIdOfCid[cidHash]   = reviewId;
-        reviewToProduct[cidHash] = productIdHash;
 
         emit ReviewSubmitted(reviewId, reviewer, productID, score, cid, block.timestamp);
     }
@@ -330,7 +333,6 @@ contract ReviewContract {
 
         bytes32 newCidHash = keccak256(bytes(newCid));
         reviewIdOfCid[newCidHash]   = reviewId;
-        reviewToProduct[newCidHash] = rv.productIdHash;
 
         emit ReviewModified(reviewId, oldCid, newCid);
     }
@@ -345,6 +347,7 @@ contract ReviewContract {
         if (rv.reviewer == address(0)) revert UnknownReview();
         if (rv.reviewer != msg.sender) revert NotReviewer();
         if (rv.revoked)                revert ReviewAlreadyRevoked();
+        if (block.timestamp >= rv.windowStart + CURATION_WINDOW) revert RevocationWindowElapsed();
 
         if (rv.includedInAggregation) {
             _excludeFromAggregation(rv);
@@ -362,8 +365,12 @@ contract ReviewContract {
         if (!vendorRegistry.isVendor(msg.sender)) revert NotAnAuthorizedVendor();
 
         bytes32 reviewCidHash = keccak256(bytes(reviewCid));
-        bytes32 productIdHash = reviewToProduct[reviewCidHash];
-        if (vendorRegistry.vendorOfProduct(productIdHash) != msg.sender) revert NotProductOwner();
+        uint256 reviewId = reviewIdOfCid[reviewCidHash];
+        Review storage rv = reviews[reviewId];
+
+        // Ensure the caller is the vendor that sold the product according to the PoP
+        if (rv.vendor != msg.sender) revert NotProductOwner();
+        if (rv.revoked)              revert ReviewAlreadyRevoked();
         if (hasVendorReplied[reviewCidHash]) revert AlreadyReplied();
 
         hasVendorReplied[reviewCidHash] = true;
@@ -389,6 +396,7 @@ contract ReviewContract {
     function voteOnReview(
         uint256 reviewId,
         string calldata voterDID,
+        string calldata vendorDID,
         string calldata productID,
         bytes32 nullifier,
         bytes32[] calldata sdDigests,
@@ -410,7 +418,8 @@ contract ReviewContract {
 
         // Reconstruct SD-JWT payload hash
         bytes32 productIdHash = keccak256(bytes(productID));
-        bytes32 payloadHash = keccak256(abi.encode(voterDID, productIdHash, nullifier, sdDigests));
+        if (productIdHash != rv.productIdHash) revert ProductIdMismatch(productID);
+        bytes32 payloadHash = keccak256(abi.encode(voterDID, vendorDID, productIdHash, nullifier, sdDigests));
 
         // Verify Issuer signature
         address recoveredIssuer = ecrecover(payloadHash, v, r, s);
@@ -496,6 +505,7 @@ contract ReviewContract {
     function _includeInAggregation(Review storage rv) internal {
         rv.includedInAggregation = true;
         uint256 contribution = uint256(rv.score) * rv.reputationAtSubmission;
+
         if (rv.vendor != address(0)) {
             vendorScoreSum[rv.vendor]  += contribution;
             vendorWeightSum[rv.vendor] += rv.reputationAtSubmission;
