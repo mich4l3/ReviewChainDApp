@@ -28,31 +28,28 @@ const SECONDS_31_DAYS   = 31 * 24 * 60 * 60; // 2 678 400
 const REVIEW_CONTRACT_ABI = [
   // ── Funzioni write ──
   `function submitReview(
-     (address issuerWallet,
-      address userWalletAddress,
-      bytes32 productIdHash,
-      bytes32 nullifier,
-      bytes32[] sdDigests,
-      uint8    v,
-      bytes32  r,
-      bytes32  s) pop,
+     string reviewerDID,
      string productID,
      string cid,
-     uint8  score
+     uint8  score,
+     bytes32 nullifier,
+     bytes32[] sdDigests,
+     uint8 v,
+     bytes32 r,
+     bytes32 s
    ) returns (uint256)`,
 
   `function finalizeCuration(uint256 reviewId)`,
 
   `function voteOnReview(
      uint256 reviewId,
-     (address issuerWallet,
-      address userWalletAddress,
-      bytes32 productIdHash,
-      bytes32 nullifier,
-      bytes32[] sdDigests,
-      uint8    v,
-      bytes32  r,
-      bytes32  s) pop,
+     string voterDID,
+     string productID,
+     bytes32 nullifier,
+     bytes32[] sdDigests,
+     uint8 v,
+     bytes32 r,
+     bytes32 s,
      bool useful
    )`,
 
@@ -93,11 +90,16 @@ const REPUTATION_TOKEN_ABI = [
   `function totalSupply() view returns (uint256)`,
 ];
 
+const DID_REGISTRY_ABI = [
+  `function registerDID(string did, string publicKey, string serviceEndpoint)`,
+  `function isActiveByOwner(address) view returns (bool)`
+];
+
 // ─── Stato applicazione ───────────────────────────────────────────────────────
 
 let provider, signer, userAddress;
 let deployment;
-let reviewContract, reputationToken;
+let reviewContract, reputationToken, didRegistry;
 let lastReviewId = null;
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
@@ -180,6 +182,21 @@ async function connectWallet() {
       REPUTATION_TOKEN_ABI,
       signer
     );
+    didRegistry = new ethers.Contract(
+      deployment.contracts.DIDRegistry,
+      DID_REGISTRY_ABI,
+      signer
+    );
+
+    // Controlla registrazione DID
+    const isActive = await didRegistry.isActiveByOwner(userAddress);
+    if (!isActive) {
+      logActivity("👤 Registrazione DID in corso...", "loading");
+      const userDid = "did:ethr:" + userAddress.toLowerCase();
+      const tx = await didRegistry.registerDID(userDid, "pubkey-" + userAddress.slice(0, 6), "");
+      await tx.wait();
+      logActivity("✅ DID registrato on-chain!", "success");
+    }
 
     // Aggiorna UI
     updateWalletUI();
@@ -240,6 +257,7 @@ async function uploadToIPFS(text) {
 // ─── Invio Recensione ─────────────────────────────────────────────────────────
 
 async function submitReview() {
+  const userDid    = "did:ethr:" + userAddress.toLowerCase();
   const productId  = document.getElementById("productId").value.trim();
   const reviewText = document.getElementById("reviewText").value.trim();
   const scoreEl    = document.querySelector('input[name="score"]:checked');
@@ -266,7 +284,7 @@ async function submitReview() {
     const popRes = await fetch(`${ISSUER_URL}/request-pop`, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ userAddress, productId }),
+      body:    JSON.stringify({ did: userDid, productId }),
     }).catch(() => {
       throw new Error(
         "Impossibile contattare il server Issuer su " + ISSUER_URL +
@@ -295,22 +313,16 @@ async function submitReview() {
     setStep(4, "active");
     logActivity(`⛓️ Invio transazione a ReviewContract...`);
 
-    // La struct SDJWTPresentation viene passata come oggetto con chiavi nominali.
-    // ethers v6 la codifica come ABI tuple() nel calldata.
     const tx = await reviewContract.submitReview(
-      {
-        issuerWallet:      pop.issuerWallet,
-        userWalletAddress: pop.userWalletAddress,
-        productIdHash:     pop.productIdHash,
-        nullifier:         pop.nullifier,
-        sdDigests:         pop.sdDigests,
-        v:                 pop.v,
-        r:                 pop.r,
-        s:                 pop.s,
-      },
+      userDid,
       productId,
       cid,
-      score
+      score,
+      pop.nullifier,
+      pop.sdDigests,
+      pop.v,
+      pop.r,
+      pop.s
     );
 
     logActivity(`📤 TX inviata: ${tx.hash.slice(0, 18)}...`);

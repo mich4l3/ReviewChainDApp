@@ -86,30 +86,30 @@ app.use(express.json());
 /**
  * Body (JSON):
  *   {
- *     "userAddress": "0x...",    // indirizzo MetaMask del reviewer
- *     "productId":  "SKU-123"    // ID prodotto acquistato (stringa)
+ *     "did":       "did:ethr:0x...",  // DID string del reviewer
+ *     "productId": "SKU-123"          // ID prodotto acquistato (stringa)
  *   }
  *
  * Risposta (JSON) — struttura 1:1 con SDJWTPresentation in Solidity:
  *   {
- *     "issuerWallet":      "0x...",
- *     "userWalletAddress": "0x...",
- *     "productIdHash":     "0x...",  // bytes32
- *     "nullifier":         "0x...",  // bytes32 random
- *     "sdDigests":         ["0x...", "0x..."],  // bytes32[]
- *     "v": 27,                        // uint8
- *     "r": "0x...",                   // bytes32
- *     "s": "0x..."                    // bytes32
+ *     "issuerWallet":  "0x...",
+ *     "did":           "did:ethr:0x...",
+ *     "productIdHash": "0x...",  // bytes32
+ *     "nullifier":     "0x...",  // bytes32 random
+ *     "sdDigests":     ["0x...", "0x..."],  // bytes32[]
+ *     "v": 27,                   // uint8
+ *     "r": "0x...",              // bytes32
+ *     "s": "0x..."               // bytes32
  *   }
  */
 app.post("/request-pop", async (req, res) => {
   try {
-    const { userAddress, productId } = req.body;
+    const { did, productId } = req.body;
 
     // ── Validazione input ────────────────────────────────────────────────────
-    if (!userAddress || !ethers.isAddress(userAddress)) {
+    if (!did || typeof did !== "string" || !did.startsWith("did:")) {
       return res.status(400).json({
-        error: "Campo 'userAddress' mancante o non è un indirizzo Ethereum valido.",
+        error: "Campo 'did' mancante o non è un DID valido.",
       });
     }
     if (!productId || typeof productId !== "string" || productId.trim() === "") {
@@ -128,10 +128,10 @@ app.post("/request-pop", async (req, res) => {
     // Anti-replay: NullifierRegistry.spend() reverte se questo valore è già
     // stato usato in una precedente submitReview(). Ogni PoP è monouso.
     // Conformemente al WP2/WP3, il nullifier è generato in modo deterministico:
-    // Nullifier = Hash(User_ID + Universal_ProductID + Secret_Salt)
+    // Nullifier = Hash(User_DID + Universal_ProductID + Secret_Salt)
     const SECRET_SALT = "TechRate_Issuer_Secret_Salt_v1";
     const nullifier = ethers.keccak256(
-      ethers.toUtf8Bytes(userAddress.toLowerCase() + trimmedProductId + SECRET_SALT)
+      ethers.toUtf8Bytes(did.toLowerCase() + trimmedProductId + SECRET_SALT)
     );
 
     // ── 3. SD-JWT selective disclosure digests (bytes32[]) ────────────────────
@@ -143,7 +143,7 @@ app.post("/request-pop", async (req, res) => {
     const sdDigests = [
       // Simulazione del claim "shipping_address" (non divulgato on-chain)
       ethers.keccak256(
-        ethers.toUtf8Bytes(`shipping_address:${userAddress}:${trimmedProductId}`)
+        ethers.toUtf8Bytes(`shipping_address:${did}:${trimmedProductId}`)
       ),
       // Simulazione del claim "payment_amount" (non divulgato on-chain)
       ethers.keccak256(
@@ -154,14 +154,14 @@ app.post("/request-pop", async (req, res) => {
     // ── 4. Hash esatto di _verifyPresentation() ───────────────────────────────
     //
     //   bytes32 h = keccak256(
-    //       abi.encode(userWalletAddress, productIdHash, nullifier, sdDigests)
+    //       abi.encode(did, productIdHash, nullifier, sdDigests)
     //   );
     //
     // ethers.AbiCoder.defaultAbiCoder().encode() replica fedelmente
     // abi.encode() di Solidity con padding a 32 byte per ogni tipo.
     const encoded = abiCoder.encode(
-      ["address", "bytes32", "bytes32", "bytes32[]"],
-      [userAddress, productIdHash, nullifier, sdDigests]
+      ["string", "bytes32", "bytes32", "bytes32[]"],
+      [did, productIdHash, nullifier, sdDigests]
     );
     const hash = ethers.keccak256(encoded);
 
@@ -177,8 +177,8 @@ app.post("/request-pop", async (req, res) => {
 
     // ── 6. Risposta ───────────────────────────────────────────────────────────
     const pop = {
-      issuerWallet:      issuerWallet.address,
-      userWalletAddress: userAddress,
+      issuerWallet: issuerWallet.address,
+      did:          did,
       productIdHash,
       nullifier,
       sdDigests,
@@ -188,7 +188,7 @@ app.post("/request-pop", async (req, res) => {
     };
 
     console.log(
-      `📝  PoP firmato | user=${userAddress} | product="${trimmedProductId}" | nullifier=${nullifier.slice(0, 10)}...`
+      `📝  PoP firmato | did=${did} | product="${trimmedProductId}" | nullifier=${nullifier.slice(0, 10)}...`
     );
     res.json(pop);
 

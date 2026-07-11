@@ -6,6 +6,7 @@ import {VendorRegistry}    from "./VendorRegistry.sol";
 import {ReputationToken}   from "./ReputationToken.sol";
 import {FixedPointMath}    from "./FixedPointMath.sol";
 import {DIDRegistry}       from "./DIDRegistry.sol";
+import {IdentityRegistry}  from "./IdentityRegistry.sol";
 
 /// @title ReviewContract
 /// @notice Core application logic of the TechRate protocol: review
@@ -39,12 +40,9 @@ contract ReviewContract {
     VendorRegistry    public immutable vendorRegistry;
     ReputationToken   public immutable reputationToken;
     DIDRegistry       public immutable didRegistry;
+    IdentityRegistry  public immutable identityRegistry;
 
     address public owner;
-
-    /// @notice The DApp backend wallet authorised to relay review
-    ///         submissions and votes after verifying the SD-JWT off-chain.
-    address public trustedRelayer;
 
     // ------------------------------------------------------------------
     // Protocol parameters (WP2 S2.6)
@@ -132,14 +130,14 @@ contract ReviewContract {
     event CurationFinalized(uint256 indexed reviewId, uint256 consensus, uint256 upvoteWeight, uint256 downvoteWeight);
     event TokensRedeemed(address indexed user, address indexed platform, uint256 amount);
     event ReviewerRewarded(uint256 indexed reviewId, address indexed reviewer, uint256 tokens);
-    event RelayerUpdated(address indexed oldRelayer, address indexed newRelayer);
 
     // ------------------------------------------------------------------
     // Errors
     // ------------------------------------------------------------------
     error NotOwner();
-    error NotRelayer();
     error DIDNotActive();
+    error UntrustedIssuer();
+    error NotVoter();
     error InvalidScore();
     error ProductIdMismatch(string productID);
     error UnknownReview();
@@ -163,20 +161,12 @@ contract ReviewContract {
         _;
     }
 
-    /// @dev Only the trusted DApp relayer may call `submitReview` and
-    ///      `voteOnReview`. This enforces that SD-JWT verification has
-    ///      been performed off-chain before any on-chain state change.
-    modifier onlyRelayer() {
-        if (msg.sender != trustedRelayer) revert NotRelayer();
-        _;
-    }
-
     constructor(
         address nullifierRegistry_,
         address vendorRegistry_,
         address reputationToken_,
         address didRegistry_,
-        address trustedRelayer_,
+        address identityRegistry_,
         uint256 deltaPlus_,
         uint256 deltaMinus_,
         uint256 thetaFixedPoint_,
@@ -190,7 +180,7 @@ contract ReviewContract {
         vendorRegistry    = VendorRegistry(vendorRegistry_);
         reputationToken   = ReputationToken(reputationToken_);
         didRegistry       = DIDRegistry(didRegistry_);
-        trustedRelayer    = trustedRelayer_;
+        identityRegistry  = IdentityRegistry(identityRegistry_);
 
         deltaPlus          = deltaPlus_;
         deltaMinus         = deltaMinus_;
@@ -220,12 +210,7 @@ contract ReviewContract {
         redemptionThreshold = redemptionThreshold_;
     }
 
-    /// @notice Allows the owner to rotate the trusted relayer address
-    ///         (e.g. in case of a backend key compromise).
-    function setTrustedRelayer(address newRelayer) external onlyOwner {
-        emit RelayerUpdated(trustedRelayer, newRelayer);
-        trustedRelayer = newRelayer;
-    }
+
 
     // ------------------------------------------------------------------
     // Internal helpers
@@ -244,37 +229,52 @@ contract ReviewContract {
     // Review submission (WP2 S2.3)
     // ------------------------------------------------------------------
 
-    /// @notice Submit a new review on behalf of `reviewer`.
-    ///         Must be called by the trusted DApp relayer after verifying
-    ///         the reviewer's SD-JWT Proof of Purchase off-chain.
+    /// @notice Submit a new review directly by the user.
+    ///         Verifies the SD-JWT signature via ecrecover on-chain.
     ///
-    /// @param reviewer   Ethereum address of the reviewer (extracted from
-    ///                   the SD-JWT by the relayer).
-    /// @param productID  Human-readable product identifier.
-    /// @param cid        IPFS Content Identifier of the review JSON.
-    /// @param score      Numerical rating in [1, 5].
-    /// @param nullifier  Anti-replay nullifier extracted from the SD-JWT.
-    ///                   Spent on-chain to prevent the same PoP being
-    ///                   reused even by a compromised relayer.
+    /// @param reviewerDID The DID string of the reviewer.
+    /// @param productID   Human-readable product identifier.
+    /// @param cid         IPFS Content Identifier of the review JSON.
+    /// @param score       Numerical rating in [1, 5].
+    /// @param nullifier   Anti-replay nullifier.
+    /// @param sdDigests   SD-JWT undisclosed claim digests.
+    /// @param v           ECDSA signature parameter.
+    /// @param r           ECDSA signature parameter.
+    /// @param s           ECDSA signature parameter.
     function submitReview(
-        address        reviewer,
+        string calldata reviewerDID,
         string calldata productID,
         string calldata cid,
         uint8           score,
-        bytes32         nullifier
-    ) external onlyRelayer returns (uint256 reviewId) {
+        bytes32         nullifier,
+        bytes32[] calldata sdDigests,
+        uint8           v,
+        bytes32         r,
+        bytes32         s
+    ) external returns (uint256 reviewId) {
         if (score < 1 || score > 5) revert InvalidScore();
 
-        // DID check: the reviewer must have an active registered DID.
-        if (!didRegistry.isActiveByOwner(reviewer)) revert DIDNotActive();
+        DIDRegistry.DIDDocument memory doc = didRegistry.resolveDID(reviewerDID);
+        if (!doc.active) revert DIDNotActive();
+        address reviewer = doc.owner;
 
-        // Anti-replay: burn the nullifier on-chain regardless of relayer honesty.
+        // Ensure caller is the owner of the DID
+        if (msg.sender != reviewer) revert NotReviewer();
+
+        // Reconstruct SD-JWT payload hash
+        bytes32 productIdHash = keccak256(bytes(productID));
+        bytes32 payloadHash = keccak256(abi.encode(reviewerDID, productIdHash, nullifier, sdDigests));
+
+        // Verify Issuer signature
+        address recoveredIssuer = ecrecover(payloadHash, v, r, s);
+        if (!identityRegistry.isIssuer(recoveredIssuer)) revert UntrustedIssuer();
+
+        // Anti-replay: burn the nullifier on-chain.
         nullifierRegistry.spend(nullifier);
 
         _registerIfNeeded(reviewer);
 
-        bytes32 productIdHash = keccak256(bytes(productID));
-        address vendor        = vendorRegistry.vendorOfProduct(productIdHash);
+        address vendor = vendorRegistry.vendorOfProduct(productIdHash);
 
         reviewCount++;
         reviewId = reviewCount;
@@ -374,27 +374,47 @@ contract ReviewContract {
     // Utility Voting (WP2 S2.6)
     // ------------------------------------------------------------------
 
-    /// @notice Cast a vote on behalf of `voter`.
-    ///         Must be called by the trusted relayer after verifying the
-    ///         voter's SD-JWT (proving product ownership) off-chain.
+    /// @notice Cast a vote directly by the user.
+    ///         Verifies the SD-JWT signature via ecrecover on-chain.
     ///
     /// @param reviewId  The review to vote on.
-    /// @param voter     Address of the voter (extracted from SD-JWT).
-    /// @param nullifier Anti-replay nullifier from the voter's PoP.
+    /// @param voterDID  The DID string of the voter.
+    /// @param productID Human-readable product identifier of the voter's PoP.
+    /// @param nullifier Anti-replay nullifier.
+    /// @param sdDigests SD-JWT undisclosed claim digests.
+    /// @param v         ECDSA signature parameter.
+    /// @param r         ECDSA signature parameter.
+    /// @param s         ECDSA signature parameter.
     /// @param useful    true = upvote, false = downvote.
     function voteOnReview(
         uint256 reviewId,
-        address voter,
+        string calldata voterDID,
+        string calldata productID,
         bytes32 nullifier,
+        bytes32[] calldata sdDigests,
+        uint8   v,
+        bytes32 r,
+        bytes32 s,
         bool    useful
-    ) external onlyRelayer {
+    ) external {
         Review storage rv = reviews[reviewId];
         if (rv.reviewer == address(0)) revert UnknownReview();
         if (rv.revoked)                revert ReviewAlreadyRevoked();
         if (rv.curationClosed)         revert ReviewClosed();
 
-        // DID check
-        if (!didRegistry.isActiveByOwner(voter)) revert DIDNotActive();
+        DIDRegistry.DIDDocument memory doc = didRegistry.resolveDID(voterDID);
+        if (!doc.active) revert DIDNotActive();
+        address voter = doc.owner;
+
+        if (msg.sender != voter) revert NotVoter();
+
+        // Reconstruct SD-JWT payload hash
+        bytes32 productIdHash = keccak256(bytes(productID));
+        bytes32 payloadHash = keccak256(abi.encode(voterDID, productIdHash, nullifier, sdDigests));
+
+        // Verify Issuer signature
+        address recoveredIssuer = ecrecover(payloadHash, v, r, s);
+        if (!identityRegistry.isIssuer(recoveredIssuer)) revert UntrustedIssuer();
 
         // Anti-replay nullifier (spent on-chain for safety)
         nullifierRegistry.spend(nullifier);

@@ -130,9 +130,13 @@ async function main() {
     issuer.address,  // genesisIssuer
   ]);
 
+  // ── 1.5 DIDRegistry ───────────────────────────────────────────────────────
+  const didRegistry = await deploy(deployer, "DIDRegistry", []);
+
   // ── 2. VendorRegistry ─────────────────────────────────────────────────────
   const vendorRegistry = await deploy(deployer, "VendorRegistry", [
     await identityRegistry.getAddress(),
+    await didRegistry.getAddress(),
   ]);
 
   // ── 3. NullifierRegistry ──────────────────────────────────────────────────
@@ -146,10 +150,11 @@ async function main() {
 
   // ── 5. ReviewContract ─────────────────────────────────────────────────────
   const reviewContract = await deploy(deployer, "ReviewContract", [
-    await identityRegistry.getAddress(),
     await nullifierRegistry.getAddress(),
     await vendorRegistry.getAddress(),
     await reputationToken.getAddress(),
+    await didRegistry.getAddress(),
+    await identityRegistry.getAddress(),
     CURATION_PARAMS.deltaPlus,
     CURATION_PARAMS.deltaMinus,
     CURATION_PARAMS.thetaFixedPoint,
@@ -158,6 +163,19 @@ async function main() {
   ]);
 
   const reviewContractAddress = await reviewContract.getAddress();
+
+  // ── 5.5 Registrazione DID per il Deployer (Account 0) ─────────────────────
+  console.log("\n👤  Registrazione DID per il Deployer...");
+  const didArtifact = loadArtifact("DIDRegistry");
+  const didInstance = new ethers.Contract(
+    await didRegistry.getAddress(),
+    didArtifact.abi,
+    deployer
+  );
+  const deployerDID = "did:ethr:" + deployerWallet.address.toLowerCase();
+  const txDID = await didInstance.registerDID(deployerDID, "pubkey-deployer", "");
+  await txDID.wait();
+  console.log(`  ✅  Deployer DID registrato: ${deployerDID}`);
 
   // ── 6. Wiring post-deploy ─────────────────────────────────────────────────
   // NullifierRegistry e ReputationToken espongono setReviewContract(),
@@ -207,6 +225,7 @@ async function main() {
       VendorRegistry:   await vendorRegistry.getAddress(),
       NullifierRegistry: await nullifierRegistry.getAddress(),
       ReputationToken:  await reputationToken.getAddress(),
+      DIDRegistry:      await didRegistry.getAddress(),
       ReviewContract:   reviewContractAddress,
     },
     curationParams: {
