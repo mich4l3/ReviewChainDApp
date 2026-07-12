@@ -104,10 +104,10 @@ contract DIDRegistry {
             active:          true
         });
 
-        _registered[msg.sender] = true;
-        _didToOwner[did]        = msg.sender;
+        _registered[owner] = true;
+        _didToOwner[did]   = owner;
 
-        emit DIDRegistered(msg.sender, did, publicKey, block.timestamp);
+        emit DIDRegistered(owner, did, publicKey, block.timestamp);
     }
 
     // ------------------------------------------------------------------

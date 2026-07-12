@@ -307,6 +307,45 @@ describe("DID — liveness enforcement", async function () {
   });
 });
 
+describe("DIDRegistry — issuerRegisterDID", async function () {
+  it("happy path: DID registered by issuer resolves to the correct owner address", async function () {
+    const { viem } = await network.create();
+    const { didRegistry, other } = await deployAll(viem);
+
+    const ownerDID = makeDID(other.account.address);
+
+    // issuerAccount is pre-registered as an Issuer in deployAll via IdentityRegistry
+    await didRegistry.write.issuerRegisterDID(
+      [other.account.address, ownerDID, "pubkey-other", ""],
+      { account: issuerAccount },
+    );
+
+    // The DID document must resolve to `other`, not to the issuer
+    const doc = await didRegistry.read.resolveDID([ownerDID]);
+    assert.equal(
+      doc.owner.toLowerCase(),
+      other.account.address.toLowerCase(),
+      "resolveDID should return the owner address, not the issuer address",
+    );
+    assert.ok(doc.active, "DID should be active after issuer registration");
+  });
+
+  it("reverts NotIssuer when called by a non-issuer account", async function () {
+    const { viem } = await network.create();
+    const { didRegistry, other, voter } = await deployAll(viem);
+
+    const ownerDID = makeDID(other.account.address);
+
+    await viem.assertions.revertWithCustomError(
+      didRegistry.write.issuerRegisterDID(
+        [other.account.address, ownerDID, "pubkey-other", ""],
+        { account: voter.account }, // voter is NOT a registered issuer
+      ),
+      didRegistry, "NotIssuer",
+    );
+  });
+});
+
 describe("S2.4 — modifyReview", async function () {
   it("allows a single modification within the 3-hour window", async function () {
     const { viem } = await network.create();
@@ -429,6 +468,40 @@ describe("S2.4 — revokeReview", async function () {
     await viem.assertions.revertWithCustomError(
       reviewContract.write.revokeReview([reviewId], { account: reviewer.account }),
       reviewContract, "RevocationWindowElapsed",
+    );
+  });
+
+  it("modification resets windowStart: revocation is still allowed within 30 days of the modification", async function () {
+    // Scenario: reviewer submits, then modifies just before the 3-hour window expires.
+    // After modification windowStart is reset, so a new 30-day revocation window opens
+    // even though more than 30 days have passed since the original submission.
+    const { viem, networkHelpers } = await network.create();
+    const { vendor, reviewContract, reviewer, productIdHash } = await deployAll(viem);
+
+    const nullifier = randomNullifier();
+    const sdDigests: `0x${string}`[] = [];
+    const sig = await buildPoPSig(makeDID(reviewer.account.address), makeDID(vendor.account.address), productIdHash, nullifier, sdDigests);
+
+    await reviewContract.write.submitReview([
+        makeDID(reviewer.account.address), makeDID(vendor.account.address), PRODUCT_ID, "bafybeig_extrev_orig", 3, nullifier, sdDigests, sig.v, sig.r, sig.s],
+      { account: reviewer.account },
+    );
+    const reviewId = await reviewContract.read.reviewCount();
+
+    // Advance to just before the 3-hour modification deadline and modify
+    await networkHelpers.time.increase(2 * 60 * 60); // +2 h (still within 3 h)
+    await reviewContract.write.modifyReview(
+      [reviewId, "bafybeig_extrev_mod"], { account: reviewer.account },
+    );
+
+    // Now advance 15 more days — total elapsed since original submission > 30 days,
+    // but only 15 days have passed since the modification reset windowStart
+    await networkHelpers.time.increase(15 * 24 * 60 * 60);
+
+    // Revocation must succeed because we are within the new 30-day window
+    await viem.assertions.emit(
+      reviewContract.write.revokeReview([reviewId], { account: reviewer.account }),
+      reviewContract, "ReviewRevoked",
     );
   });
 });

@@ -15,21 +15,17 @@ import {IdentityRegistry}  from "./IdentityRegistry.sol";
 ///         Proof-of-Curation (S2.6), seller/product reputation
 ///         aggregation (S2.6), and the Burn-to-Redeem mechanism (S2.6).
 ///
-/// @dev ARCHITECTURAL NOTE — Off-Chain SD-JWT Verification (WP4):
-///      In the original design the smart contract received a raw ECDSA
-///      (v, r, s) tuple and called `ecrecover` on-chain to verify the
-///      issuer's signature over the Proof of Purchase (SDJWTPresentation).
-///      In the current implementation the verification of the SD-JWT
-///      (including the issuer's RSA/P-256 signature and selective-disclosure
-///      claims) is performed **off-chain** by the DApp backend, which acts
-///      as a trusted relayer. Only the relayer is allowed to call
-///      `submitReview` and `voteOnReview`; the contract trusts the relayer
-///      to have verified the SD-JWT honestly.
-///      The nullifier is still spent on-chain (via NullifierRegistry) to
-///      guarantee replay-resistance even in the event of a compromised
-///      relayer.
-///      All actors (reviewers, voters) must have an active DID registered
-///      in the DIDRegistry before the contract accepts their participation.
+/// @dev SD-JWT VERIFICATION — on-chain via ecrecover:
+///      The SD-JWT Proof of Purchase is verified entirely on-chain.
+///      The contract reconstructs a payload hash from the disclosed
+///      plaintext claims (reviewerDID, vendorDID, productIdHash,
+///      nullifier, sdDigests) and calls `ecrecover` to recover the
+///      signer's address, which is then checked against the
+///      IdentityRegistry's trusted-issuer whitelist.
+///      Hidden claims (sdDigests) are bound to the signature as opaque
+///      digests; their values and salts are never transmitted or
+///      expanded on-chain, consistent with the SD-JWT selective-
+///      disclosure model described in WP2 S2.3.
 contract ReviewContract {
     using FixedPointMath for uint256;
 
@@ -347,6 +343,13 @@ contract ReviewContract {
         if (rv.reviewer == address(0)) revert UnknownReview();
         if (rv.reviewer != msg.sender) revert NotReviewer();
         if (rv.revoked)                revert ReviewAlreadyRevoked();
+        // NOTE: revocation is gated on `windowStart`, not `submittedAt`.
+        // `windowStart` is reset to block.timestamp whenever a modification
+        // is made (see `modifyReview`), so a modification extends the
+        // revocation deadline by a new 30-day curation window.
+        // This is intentional: after a modification the review is
+        // re-introduced into the curation queue as new content, opening a
+        // fresh voting and revocation period.
         if (block.timestamp >= rv.windowStart + CURATION_WINDOW) revert RevocationWindowElapsed();
 
         if (rv.includedInAggregation) {
